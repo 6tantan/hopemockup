@@ -58,11 +58,7 @@
         { id: 'potion', name: 'Potion', desc: '回復 20 HP', qty: 5 },
         { id: 'ether',  name: 'Ether',  desc: '回復 10 MP', qty: 3 },
         { id: 'bomb',   name: 'Bomb',   desc: '造成 30 傷害', qty: 1 },
-      ],
-      equipment: [
-        { slot: 'Weapon', name: 'Bronze Sword', bonus: '+2 POW' },
-        { slot: 'Armor',  name: 'Cloth Armor',  bonus: '+1 DEF' },
-      ],
+      ]
     };
 
     const COMPANIONS_POOL = [
@@ -77,7 +73,7 @@
     // ===== Job/Race code & Star Sigils ======================================
     const JOB_CODE = { Kamfe:'KA', Strel:'ST', Magus:'MA' };
     const RACE_CODE = { Human:'Hu', Beasts:'Be', Mechs:'Me', Deity:'De', Fantasy:'Fa', Demon:'Mo' };
-    function jobCode(u){ return (JOB_CODE[u.job]||'??') + (RACE_CODE[u.race]||'??'); }
+    const jobCode = (u) => (JOB_CODE[u.job]||'??') + (RACE_CODE[u.race]||'??');
 
     const STAR_SIGILS = {
       BlazingHorn: { abbr:'BH', symbol:'♈', en:'Blazing Horn', zh:'烈角' },
@@ -94,7 +90,6 @@
       Tidemare:    { abbr:'TM', symbol:'♓', en:'Tidemare',    zh:'潮夢' },
     };
 
-    // Roster meta for display (job/race/star/level)
     const ROSTER_META = {
       "星井 Hoshii": { job: "Magus",  race: "Fantasy", level: 1, starSigil: "Tidemare" },
       "燎原 Kagura": { job: "Kamfe",  race: "Beasts",  level: 1, starSigil: "BlazingHorn" },
@@ -108,7 +103,6 @@
       "瑟莉亞 Celia":{ job: "Kamfe",  race: "Human",   level: 1, starSigil: "Balancewing" },
     };
 
-    // Companion base stats (demo balance)
     const COMPANION_DATA = {
       "星井 Hoshii": { maxHP: 74, maxMP: 40, POW: 7,  DEF: 5, INT:12, DEX:10, EVA: 6 },
       "燎原 Kagura": { maxHP: 88, maxMP: 22, POW:12, DEF: 8, INT: 5, DEX: 9, EVA: 6 },
@@ -128,56 +122,127 @@
       return { name, ...m, ...d, hp: d.maxHP, mp: d.maxMP };
     }
 
+    // ==== Equipment DB & helpers ===========================================
+    const EQUIP_DB = {
+      Weapon: [
+        { name:'Bronze Sword',     mods:{ POW:+2 } },
+        { name:'Hunter Bow',       mods:{ DEX:+2 } },
+        { name:'Apprentice Staff', mods:{ INT:+2 } },
+        { name:'Duelist Blade',    mods:{ POW:+1, DEX:+1 } },
+        { name:'Heavy Axe',        mods:{ POW:+4, DEX:-1 } },
+      ],
+      Body: [
+        { name:'Cloth Armor',  mods:{ DEF:+1 } },
+        { name:'Leather Vest', mods:{ EVA:+2 } },
+        { name:'Iron Mail',    mods:{ DEF:+3, DEX:-1 } },
+        { name:'Mystic Robe',  mods:{ INT:+2, DEF:+1 } },
+      ],
+      Accessory: [
+        { name:'Traveler Charm', mods:{ DEX:+1, EVA:+1 } },
+        { name:'Power Ring',     mods:{ POW:+2 } },
+        { name:'Mind Pendant',   mods:{ INT:+2 } },
+        { name:'Guardian Band',  mods:{ DEF:+2 } },
+      ],
+    };
+    const getEquipItem = (slot, name) => (EQUIP_DB[slot]||[]).find(it=>it.name===name)||null;
+    const applyMods = (base, mods) => {
+      const out = { ...base };
+      ['POW','DEF','INT','DEX','EVA'].forEach(k => { const v = (mods?.[k]||0); out[k] = clamp((out[k]||0)+v,1,999); });
+      return out;
+    };
+    const getPlayerEffective = (p) => {
+      const gear = p.equip || {};
+      let eff = { ...p };
+      const w = getEquipItem('Weapon', gear.Weapon);
+      const b = getEquipItem('Body', gear.Body);
+      const a = getEquipItem('Accessory', gear.Accessory);
+      if (w) eff = applyMods(eff, w.mods);
+      if (b) eff = applyMods(eff, b.mods);
+      if (a) eff = applyMods(eff, a.mods);
+      return eff;
+    };
+    const modsToText = (mods) => {
+      if(!mods) return '';
+      const parts=[];
+      for (const k of ['POW','DEF','INT','DEX','EVA']) if (mods[k]) parts.push(`${mods[k]>0?'+':''}${mods[k]} ${k}`);
+      return parts.join(', ');
+    };
+
     // ===== Combat helpers ====================================================
-    function baseAcc(att, def) { return clamp(0.60 + 0.02 * (att.DEX - def.EVA), 0.05, 0.95); }
-    function hitChance(att, def, atkType, stepIndex) {
+    const baseAcc = (att, def) => clamp(0.60 + 0.02 * (att.DEX - def.EVA), 0.05, 0.95);
+    const hitChance = (att, def, atkType, stepIndex) => {
       const stepBonus = stepIndex === 0 ? 0 : stepIndex === 1 ? 0.10 : 0.20;
       const typeBonus = ATTACKS[atkType].accBonus;
       return clamp(baseAcc(att, def) + typeBonus + stepBonus, 0.05, 0.98);
-    }
-    function rollDamage(att, def, atkType) {
+    };
+    const rollDamage = (att, def, atkType) => {
       const spec = ATTACKS[atkType];
       const raw = spec.powMul * att.POW + spec.intMul * att.INT;
       let dmg = Math.round(raw + randInt(-1, 2));
       dmg = Math.max(1, dmg - Math.round(def.DEF * 0.5));
       return dmg;
-    }
+    };
 
     // ===== UI bits ===========================================================
-    function HPBar({ label, current, max, color}) {
-      const pct = Math.max(0, Math.round((current / max) * 100));
+    const HPBar = ({ label, current, max, color }) => {
+      const pct = Math.max(0, Math.round((current/max)*100));
       return (
         <div className="w-full">
           <div className="flex justify-between text-xs text-gray-400 mb-1">
             <span>{label}</span><span>{current}/{max}</span>
           </div>
           <div className="h-3 w-full bg-gray-800/60 rounded-full overflow-hidden">
-            <div className={`h-full ${color} transition-all duration-300`} style={{ width: `${pct}%` }} />
+            <div className={`h-full ${color} transition-all duration-300`} style={{width: `${pct}%`}}/>
           </div>
         </div>
       );
-    }
-    function StatRow({ unit }) {
-      return (
-        <div className="mt-3 text-sm text-white/80">
-          POW {unit.POW} · DEF {unit.DEF} · INT {unit.INT} · DEX {unit.DEX} · EVA {unit.EVA}
-        </div>
-      );
-    }
-    function Card({ children, className = "" }) {
-      return (<div className={`rounded-2xl bg-gray-900/60 border border-white/10 shadow-xl p-5 ${className}`}>{children}</div>);
-    }
-    function Divider() { return <div className="h-px bg-white/10 my-4" /> }
-    function useAutoscroll(dep) { const ref = useRef(null); useEffect(()=>{ if(ref.current) ref.current.scrollTop = ref.current.scrollHeight; },[dep]); return ref; }
-    function FlowButton({ value, onChange }) {
+    };
+    const StatRow = ({ unit }) => (
+      <div className="mt-3 text-sm text-white/80">
+        POW {unit.POW} · DEF {unit.DEF} · INT {unit.INT} · DEX {unit.DEX} · EVA {unit.EVA}
+      </div>
+    );
+    const Card = ({children, className=""}) => (<div className={`rounded-2xl bg-gray-900/60 border border-white/10 shadow-xl p-5 ${className}`}>{children}</div>);
+    const Divider = () => <div className="h-px bg-white/10 my-4" />;
+    const useAutoscroll = (dep) => { const ref=useRef(null); useEffect(()=>{ if(ref.current) ref.current.scrollTop = ref.current.scrollHeight; },[dep]); return ref; };
+    const FlowButton = ({ value, onChange }) => {
       const cycle = () => { const i = FLOW_KEYS.indexOf(value); onChange(FLOW_KEYS[(i + 1) % FLOW_KEYS.length]); };
       const text = value === 'L' ? 'L 輕' : value === 'H' ? 'H 重' : 'S 特';
       return (<button onClick={cycle} className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition">{text}</button>);
-    }
-    function FullCenter({ children }) { return (<div className="min-h-[70vh] flex items-center justify-center">{children}</div>); }
+    };
+    const FullCenter = ({children}) => (<div className="min-h-[70vh] flex items-center justify-center">{children}</div>);
+
+    // ==== Equip UI ===========================================================
+    const EquipSelect = ({ slot, value, onChange }) => {
+      const list = EQUIP_DB[slot] || [];
+      const idx = Math.max(0, list.findIndex(it => it.name === value));
+      const prev = () => onChange(list[(idx - 1 + list.length) % list.length].name);
+      const next = () => onChange(list[(idx + 1) % list.length].name);
+      const cur = list[idx] || null;
+      return (
+        <div className="flex items-center justify-between bg-white/5 rounded-xl p-3">
+          <div>
+            <div className="text-sm font-semibold">{slot}</div>
+            <div className="text-sm">{cur ? cur.name : value}</div>
+            <div className="text-xs text-white/60">{cur ? modsToText(cur.mods) : ""}</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={prev} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15">‹</button>
+            <button onClick={next} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15">›</button>
+          </div>
+        </div>
+      );
+    };
+    const EquipPanel = ({ gear, onChange }) => (
+      <div className="grid gap-3 md:grid-cols-3">
+        <EquipSelect slot="Weapon" value={gear.Weapon} onChange={(v)=>onChange('Weapon', v)} />
+        <EquipSelect slot="Body" value={gear.Body} onChange={(v)=>onChange('Body', v)} />
+        <EquipSelect slot="Accessory" value={gear.Accessory} onChange={(v)=>onChange('Accessory', v)} />
+      </div>
+    );
 
     // ===== Enemy scaling =====================================================
-    function makeEnemyForRoom(idx, diff, total) {
+    const makeEnemyForRoom = (idx, diff, total) => {
       const diffMul = diff === 'Normal' ? 0.9 : diff === 'Hard' ? 1.1 : 1.3;
       const roomGrowth = 1 + (idx - 1) * 0.08;
       const elite = (diff === 'Hard' && idx === total);
@@ -195,17 +260,17 @@
         DEX: Math.round(BASE_ENEMY.DEX * mul),
         EVA: Math.round(BASE_ENEMY.EVA * mul),
       };
-    }
-    function randomFlow() { const pick = () => FLOW_KEYS[randInt(0, FLOW_KEYS.length - 1)]; return [pick(), pick(), pick()]; }
+    };
+    const randomFlow = () => { const pick = () => FLOW_KEYS[randInt(0, FLOW_KEYS.length - 1)]; return [pick(), pick(), pick()]; };
 
     // ===== App ===============================================================
-    function App() {
+    function App(){
       const [screen, setScreen] = useState("title"); // title | main | quest | prepare | battle | result | status | inventory | companions | relay | settings
-      const [player, setPlayer] = useState(() => ({ ...DEFAULT_PLAYER }));
+      const [player, setPlayer] = useState(() => ({ ...DEFAULT_PLAYER, equip: { Weapon: 'Bronze Sword', Body: 'Cloth Armor', Accessory: 'Traveler Charm' } }));
       const [inventory] = useState(INVENTORY_START);
       const [party, setParty] = useState([]);
-      const [compUnits, setCompUnits] = useState({}); // {name: unit state}
-      const [compFlows, setCompFlows] = useState({}); // {name: ['L','H','S']}
+      const [compUnits, setCompUnits] = useState({});
+      const [compFlows, setCompFlows] = useState({});
 
       const [difficulty, setDifficulty] = useState(null);
       const [totalRooms, setTotalRooms] = useState(0);
@@ -215,6 +280,7 @@
       const [logs, setLogs] = useState([]); const logRef = useAutoscroll(logs);
       const [busy, setBusy] = useState(false);
       const [result, setResult] = useState(null);
+      const [backTo, setBackTo] = useState(null);
 
       const [playerFlow, setPlayerFlow] = useState(['L','H','S']);
       const [enemyFlow, setEnemyFlow]   = useState(randomFlow());
@@ -230,22 +296,19 @@
         });
         setScreen('main');
       };
-      const goQuest = () => { setScreen('quest'); };
-      const goStatus = () => { setScreen('status'); };
-      const goInventory = () => { setScreen('inventory'); };
-      const goCompanions = () => { setScreen('companions'); };
-      const goSettings = () => { setScreen('settings'); };
-      const goRelay = () => { setScreen('relay'); };
-      const startFromTitle = () => { setScreen('main'); };
+      const goQuest = () => setScreen('quest');
+      const goInventory = () => setScreen('inventory');
+      const goSettings = () => setScreen('settings');
+      const goRelay = () => setScreen('relay');
+      const goStatus = (from=null) => { setBackTo(from); setScreen('status'); };
+      const startFromTitle = () => setScreen('main');
 
       // Quest select
       const chooseQuest = (diff) => {
         const cfg = diff === 'Normal' ? 3 : diff === 'Hard' ? 5 : 7;
         setDifficulty(diff); setTotalRooms(cfg); setRoomIndex(1);
         setEnemy(makeEnemyForRoom(1, diff, cfg)); setEnemyFlow(randomFlow());
-        // 初始化隊友
-        const units = {};
-        const flows = {};
+        const units = {}, flows = {};
         party.forEach(n => { const b = getCompanionBase(n); units[n] = { ...b }; flows[n] = randomFlow(); });
         setCompUnits(units); setCompFlows(flows);
         setLogs([]); setBusy(false);
@@ -264,8 +327,8 @@
           let cHP = Object.fromEntries(party.map(n => [n, (compUnits[n]?.hp ?? getCompanionBase(n).maxHP)]));
 
           const alliesAlive = () => ['player', ...party].filter(id => id === 'player' ? pHP > 0 : (cHP[id] ?? 0) > 0);
-          const dexOf = (id) => id === 'enemy' ? enemy.DEX : (id === 'player' ? player.DEX : (compUnits[id]?.DEX ?? getCompanionBase(id).DEX));
-          const unitOf = (id) => id === 'enemy' ? enemy : (id === 'player' ? player : (compUnits[id] || getCompanionBase(id)));
+          const dexOf = (id) => id === 'enemy' ? enemy.DEX : (id === 'player' ? getPlayerEffective(player).DEX : (compUnits[id]?.DEX ?? getCompanionBase(id).DEX));
+          const unitOf = (id) => id === 'enemy' ? enemy : (id === 'player' ? getPlayerEffective(player) : (compUnits[id] || getCompanionBase(id)));
           const nameOf = (id) => {
             if (id === 'enemy') return enemy.name;
             const u = unitOf(id);
@@ -302,18 +365,18 @@
                       const nhp = Math.max(0, (cHP[targetId] ?? 0) - dmg); cHP[targetId] = nhp;
                       setCompUnits(prev => ({ ...prev, [targetId]: { ...(prev[targetId] || getCompanionBase(targetId)), hp: nhp } }));
                     }
-                    addLog(`${attacker.name} [${flow[i]}] 命中，對 ${nameOf(targetId)} 造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`);
+                    setLogs(prev => [...prev, `${attacker.name} [${flow[i]}] 命中，對 ${nameOf(targetId)} 造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`].slice(-160));
                   } else {
-                    addLog(`${attacker.name} [${flow[i]}] 的攻擊落空`);
+                    setLogs(prev => [...prev, `${attacker.name} [${flow[i]}] 的攻擊落空`].slice(-160));
                   }
                 } else {
                   const acc = hitChance(attacker, enemy, flow[i], i);
                   if (Math.random() < acc) {
                     const dmg = rollDamage(attacker, enemy, flow[i]);
                     eHP = Math.max(0, eHP - dmg); setEnemy(prev => ({ ...prev, hp: eHP }));
-                    addLog(`${nameOf(id)} [${flow[i]}] 命中，造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`);
+                    setLogs(prev => [...prev, `${nameOf(id)} [${flow[i]}] 命中，造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`].slice(-160));
                   } else {
-                    addLog(`${nameOf(id)} [${flow[i]}] 未命中（命中率 ${Math.round(acc*100)}%）`);
+                    setLogs(prev => [...prev, `${nameOf(id)} [${flow[i]}] 未命中（命中率 ${Math.round(acc*100)}%）`].slice(-160));
                   }
                 }
                 await sleep(100);
@@ -333,7 +396,7 @@
                 setEnemy(makeEnemyForRoom(nextIdx, difficulty, totalRooms));
                 setEnemyFlow(randomFlow());
                 setScreen('prepare');
-                addLog(`✔ 清空房間 ${roomIndex}，準備進入房間 ${roomIndex+1}`);
+                setLogs(prev => [...prev, `✔ 清空房間 ${roomIndex}，準備進入房間 ${roomIndex+1}`].slice(-160));
               } else {
                 setResult({ title: 'Victory', desc: `${difficulty} 地城已完全攻略！` });
                 setScreen('result');
@@ -361,7 +424,7 @@
           return { ...prev, exp, level, expToNext, maxHP, hp, maxMP, mp };
         });
       }
-      function diffExp(diff) { return diff === 'Normal' ? 10 : diff === 'Hard' ? 18 : 28; }
+      const diffExp = (diff) => diff === 'Normal' ? 10 : diff === 'Hard' ? 18 : 28;
       function recoverBetweenRooms() {
         setPlayer(prev => {
           const hpRec = Math.ceil(prev.maxHP * 0.08);
@@ -379,7 +442,6 @@
           return copy;
         });
       }
-      function addLog(line) { setLogs(prev => [...prev, line].slice(-160)); }
 
       // ===== Screens =========================================================
       const Title = () => (
@@ -396,7 +458,7 @@
         <div className="space-y-4">
           {/* Top small buttons */}
           <div className="flex justify-end gap-2">
-            <button onClick={goStatus} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">角色</button>
+            <button onClick={()=>goStatus('main')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">角色</button>
             <button onClick={goInventory} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">背包</button>
             <button onClick={goSettings} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">設定</button>
           </div>
@@ -420,7 +482,7 @@
               ) : (
                 party.map(n => (
                   <span key={n} className="inline-block font-mono bg-white/10 rounded px-2 py-0.5">
-                    {ROSTER_META[n] ? `${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}` : n}
+                    {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
                   </span>
                 ))
               )}
@@ -452,7 +514,7 @@
                 <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
                 <div className="mt-2" />
                 <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
-                <StatRow unit={player} />
+                <StatRow unit={getPlayerEffective(player)} />
               </div>
               {party.map(n => { const u = compUnits[n] || getCompanionBase(n); return (
                 <div key={n} className="pt-2 border-t border-white/10">
@@ -471,7 +533,10 @@
             <div className="text-sm mb-2">玩家攻擊流程：</div>
             <div className="flex gap-2">{playerFlow.map((v,idx)=> (<FlowButton key={idx} value={v} onChange={(nv)=> setPlayerFlow(f => f.map((x,i)=> i===idx?nv:x))} />))}</div>
             <div className="text-xs text-white/60 mt-2">提示：把 H 放到第三下，享受較高命中加成。</div><Divider/>
-            <button onClick={enterNextRoom} className="px-4 py-2 rounded-xl bg-indigo-500/90 hover:bg-indigo-500 transition font-medium">進入下一個房間</button>
+            <div className="flex gap-2">
+              <button onClick={enterNextRoom} className="px-4 py-2 rounded-xl bg-indigo-500/90 hover:bg-indigo-500 transition font-medium">進入下一個房間</button>
+              <button onClick={()=>goStatus('prepare')} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">裝備管理</button>
+            </div>
             <div className="text-xs text-white/50 mt-2">（按下後將開始自動戰鬥）</div>
             <Divider/>
             <div className="text-sm font-semibold mb-2">🧾 戰鬥紀錄（上一房 / 進行中）</div>
@@ -495,7 +560,7 @@
                 <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
                 <div className="mt-2" />
                 <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
-                <StatRow unit={player} />
+                <StatRow unit={getPlayerEffective(player)} />
               </div>
               {party.map(n => { const u = compUnits[n] || getCompanionBase(n); return (
                 <div key={n} className="pt-2 border-t border-white/10">
@@ -528,6 +593,8 @@
 
       const Status = () => {
         const pct = Math.round((player.exp / player.expToNext) * 100);
+        const gear = player.equip || { Weapon:'Bronze Sword', Body:'Cloth Armor', Accessory:'Traveler Charm' };
+        const pEff = getPlayerEffective(player);
         return (
           <Card className="max-w-3xl">
             <div className="text-lg font-semibold mb-2">🧑 角色狀態</div>
@@ -536,12 +603,20 @@
             <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
             <div className="mt-2" />
             <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
-            <StatRow unit={player} />
+            <StatRow unit={pEff} />
+            <Divider/>
+            <div className="text-lg font-semibold mb-2">🧰 裝備</div>
+            <EquipPanel gear={gear} onChange={(slot,newName)=> setPlayer(prev => ({ ...prev, equip: { ...prev.equip, [slot]: newName } }))} />
+            <div className="text-sm text-white/70 mt-3">裝備加成：
+              <span className="ml-2 font-mono bg-white/10 rounded px-2 py-0.5">
+                {['Weapon','Body','Accessory'].map(s=>modsToText(getEquipItem(s, gear[s])?.mods)).filter(Boolean).join(' ｜ ')}
+              </span>
+            </div>
             <Divider/>
             <div className="text-sm">升級進度：{player.exp}/{player.expToNext} EXP（剩餘 {Math.max(0, player.expToNext - player.exp)}）</div>
             <div className="h-2 bg-white/10 rounded mt-2 overflow-hidden"><div className="h-full bg-amber-400" style={{width: `${pct}%`}}/></div>
             <Divider/>
-            <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
+            <button onClick={()=> setScreen(backTo || 'main')} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回</button>
           </Card>
         );
       };
@@ -558,11 +633,12 @@
                 ))}</ul>}
             </div>
             <div>
-              <div className="font-semibold mb-2">裝備</div>
-              {inventory.equipment.length === 0 ? <div className="text-white/60 text-sm">（空）</div> :
-                <ul className="space-y-2">{inventory.equipment.map((eq,i) => (
-                  <li key={i} className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>{eq.slot}: {eq.name}</span><span className="text-white/60">{eq.bonus}</span></li>
-                ))}</ul>}
+              <div className="font-semibold mb-2">裝備（展示用，請到「角色」調整）</div>
+              <ul className="space-y-2">
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Weapon</span><span className="text-white/60">{player.equip?.Weapon}</span></li>
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Body</span><span className="text-white/60">{player.equip?.Body}</span></li>
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Accessory</span><span className="text-white/60">{player.equip?.Accessory}</span></li>
+              </ul>
             </div>
           </div>
           <Divider/>
@@ -578,10 +654,12 @@
             <div className="text-sm text-white/70 mb-2">點擊加入/移除（示意）。</div>
             <div className="flex flex-wrap gap-2 mb-4">
               {COMPANIONS_POOL.map(n => (
-                <button key={n} onClick={()=>toggle(n)} className={`px-3 py-1.5 rounded-full border ${party.includes(n)?'border-emerald-400 bg-emerald-400/10':'border-white/15 bg-white/5'} hover:bg-white/10 transition`}>{ROSTER_META[n] ? `${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}` : n}</button>
+                <button key={n} onClick={()=>toggle(n)} className={`px-3 py-1.5 rounded-full border ${party.includes(n)?'border-emerald-400 bg-emerald-400/10':'border-white/15 bg-white/5 hover:bg-white/10'} transition`}>
+                  {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
+                </button>
               ))}
             </div>
-            <div className="text-sm">目前隊伍：{party.length === 0 ? <span className="text-white/60">（無）</span> : party.map(n => (<span key={n} className="inline-block font-mono bg-white/10 rounded px-2 py-0.5 mr-1">{ROSTER_META[n] ? `${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}` : n}</span>))}</div>
+            <div className="text-sm">目前隊伍：{party.length === 0 ? <span className="text-white/60">（無）</span> : party.map(n => (<span key={n} className="inline-block font-mono bg-white/10 rounded px-2 py-0.5 mr-1">{`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}</span>))}</div>
             <Divider/>
             <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
           </Card>
@@ -589,7 +667,7 @@
       };
 
       const Relay = () => {
-        const maxReached = party.length >= MAX_COMPANIONS; // companions only (Jumo is fixed member)
+        const maxReached = party.length >= MAX_COMPANIONS;
         const toggle = (name) => {
           setParty(prev => prev.includes(name)
             ? prev.filter(n => n !== name)
@@ -599,7 +677,7 @@
         return (
           <Card className="max-w-3xl">
             <div className="text-lg font-semibold mb-2">🔗 連結中繼站</div>
-            <div className="text-sm text白色/70 mb-2">選擇隊友加入隊伍（含玩家最多 4 人）：目前 <span className="font-semibold">{1 + party.length}/4</span></div>
+            <div className="text-sm text-white/70 mb-2">選擇隊友加入隊伍（含玩家最多 4 人）：目前 <span className="font-semibold">{1 + party.length}/4</span></div>
             <div className="flex flex-wrap gap-2 mb-3">
               {COMPANIONS_POOL.map(n => {
                 const selected = party.includes(n);
@@ -610,7 +688,9 @@
                       ? 'border-emerald-400 bg-emerald-400/10'
                       : disabled
                         ? 'border-white/10 bg-white/5 opacity-50 cursor-not-allowed'
-                        : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>{ROSTER_META[n] ? `${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}` : n}</button>
+                        : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
+                      {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
+                  </button>
                 );
               })}
             </div>
@@ -644,7 +724,7 @@
 
       return (
         <div className="p-6 max-w-6xl mx-auto text-white">
-          <div className="mb-6 flex items-center justify-between">
+          <div className="mb-6 flex items中心 justify-between">
             <h1 className="text-2xl font-bold tracking-tight">Project Hope Prototype</h1>
             <div className="text-sm text-white/50">gameflow 確認 · 布告欄→任務難度 · 右上：角色/背包/設定</div>
           </div>
@@ -662,7 +742,7 @@
           {screen === 'result' && <Result/>}
 
           <div className="mt-6 text-xs text-white/50">
-            放置型戰鬥：L/H/S 三段攻擊；命中逐次 +0/+10/+20。房間間回復 8% HP/MP；回主畫面時回滿；戰鬥紀錄在房間間保留。
+            放置型戰鬥：L/H/S 三段攻擊；命中逐次 +0/+10/+20。房間間回復 8% HP/MP；回主畫面時回滿；戰鬥紀錄在房間間保留。新增：裝備系統（武器/身體/副裝），在主畫面「角色」或準備階段可調整。
           </div>
         </div>
       );
@@ -673,3 +753,4 @@
   </script>
 </body>
 </html>
+
