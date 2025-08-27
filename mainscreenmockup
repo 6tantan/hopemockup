@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Project Hope Prototype</title>
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 + ReactDOM (Production UMD) -->
+  <script defer crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script defer crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel for in-browser JSX (方便改動；如要更快，可改成預先編譯) -->
+  <script defer src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html, body { height: 100%; }
+    body {
+      background:
+        radial-gradient(1200px 600px at 10% 10%, rgba(99,102,241,0.06), transparent 50%),
+        radial-gradient(900px 700px at 90% 20%, rgba(14,165,233,0.06), transparent 60%),
+        #0b1020;
+    }
+  </style>
+</head>
+<body class="text-white">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useEffect, useRef, useState } = React;
+
+    // ===== Utils =============================================================
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+    const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // ===== Attack types ======================================================
+    const ATTACKS = {
+      L: { key: 'L', label: 'Light',   accBonus: +0.10, powMul: 0.80, intMul: 0.00 },
+      H: { key: 'H', label: 'Heavy',   accBonus: -0.10, powMul: 1.35, intMul: 0.00 },
+      S: { key: 'S', label: 'Special', accBonus:  0.00, powMul: 0.20, intMul: 1.00 },
+    };
+    const FLOW_KEYS = ['L','H','S'];
+
+    // ===== Player / Enemy ====================================================
+    const DEFAULT_PLAYER = {
+      name: "Jumo", job: "Kamfe", race: "Fantasy", starSigil: "Flamelion", level: 1, exp: 0, expToNext: 100,
+      maxHP: 80, hp: 80, maxMP: 30, mp: 30,
+      POW: 10, DEF: 5, INT: 8, DEX: 10, EVA: 5,
+    };
+
+    const BASE_ENEMY = {
+      name: "Slime", maxHP: 60, hp: 60, maxMP: 10, mp: 10,
+      POW: 8, DEF: 3, INT: 3, DEX: 7, EVA: 3,
+    };
+
+    // ===== Demo inventory ====================================================
+    const INVENTORY_START = {
+      items: [
+        { id: 'potion', name: 'Potion', desc: '回復 20 HP', qty: 5 },
+        { id: 'ether',  name: 'Ether',  desc: '回復 10 MP', qty: 3 },
+        { id: 'bomb',   name: 'Bomb',   desc: '造成 30 傷害', qty: 1 },
+      ]
+    };
+
+    // ===== Companions ========================================================
+    const COMPANIONS_POOL = [
+      "星井 Hoshii","燎原 Kagura","紗羅 Sara","夜渡 Yato","伊蓮娜 Elenna",
+      "洛恩 Rorn","梅希亞 Mexia","科爾維斯 Corvus","機匠 R-Alpha","瑟莉亞 Celia"
+    ];
+    const MAX_PARTY_TOTAL = 4;         // 包含玩家
+    const MAX_COMPANIONS = 3;          // 玩家固定 1 位，隊友最多 3
+
+    // ===== Job/Race code & Star Sigils ======================================
+    const JOB_CODE = { Kamfe:'KA', Strel:'ST', Magus:'MA' };
+    const RACE_CODE = { Human:'Hu', Beasts:'Be', Mechs:'Me', Deity:'De', Fantasy:'Fa', Demon:'Mo' };
+    const jobCode = (u) => (JOB_CODE[u.job]||'??') + (RACE_CODE[u.race]||'??');
+
+    const STAR_SIGILS = {
+      BlazingHorn: { abbr:'BH', symbol:'♈', en:'Blazing Horn', zh:'烈角' },
+      Terrahide:   { abbr:'TH', symbol:'♉', en:'Terrahide',   zh:'厚土' },
+      Twinshade:   { abbr:'TS', symbol:'♊', en:'Twinshade',   zh:'雙影' },
+      Shellward:   { abbr:'SW', symbol:'♋', en:'Shellward',   zh:'殼守' },
+      Flamelion:   { abbr:'FL', symbol:'♌', en:'Flamelion',   zh:'焰鬃' },
+      Pureedge:    { abbr:'PE', symbol:'♍', en:'Pureedge',    zh:'淨刃' },
+      Balancewing: { abbr:'BW', symbol:'♎', en:'Balancewing', zh:'衡翼' },
+      Nightthorn:  { abbr:'NT', symbol:'♏', en:'Nightthorn',  zh:'暗棘' },
+      Skyspear:    { abbr:'SS', symbol:'♐', en:'Skyspear',    zh:'天矢' },
+      Stonehoof:   { abbr:'SH', symbol:'♑', en:'Stonehoof',   zh:'嶺蹄' },
+      Dreamflow:   { abbr:'DF', symbol:'♒', en:'Dreamflow',   zh:'幻流' },
+      Tidemare:    { abbr:'TM', symbol:'♓', en:'Tidemare',    zh:'潮夢' },
+    };
+
+    const ROSTER_META = {
+      "星井 Hoshii": { job: "Magus",  race: "Fantasy", level: 1, starSigil: "Tidemare" },
+      "燎原 Kagura": { job: "Kamfe",  race: "Beasts",  level: 1, starSigil: "BlazingHorn" },
+      "紗羅 Sara":   { job: "Magus",  race: "Human",   level: 1, starSigil: "Pureedge" },
+      "夜渡 Yato":   { job: "Kamfe",  race: "Demon",   level: 1, starSigil: "Nightthorn" },
+      "伊蓮娜 Elenna":{ job: "Strel",  race: "Deity",   level: 1, starSigil: "Skyspear" },
+      "洛恩 Rorn":   { job: "Strel",  race: "Beasts",  level: 1, starSigil: "Terrahide" },
+      "梅希亞 Mexia":{ job: "Kamfe",  race: "Fantasy", level: 1, starSigil: "Flamelion" },
+      "科爾維斯 Corvus":{ job: "Strel", race: "Demon", level: 1, starSigil: "Twinshade" },
+      "機匠 R-Alpha":{ job: "Magus",  race: "Mechs",   level: 1, starSigil: "Dreamflow" },
+      "瑟莉亞 Celia":{ job: "Kamfe",  race: "Human",   level: 1, starSigil: "Balancewing" },
+    };
+
+    const COMPANION_DATA = {
+      "星井 Hoshii": { maxHP: 74, maxMP: 40, POW: 7,  DEF: 5, INT:12, DEX:10, EVA: 6 },
+      "燎原 Kagura": { maxHP: 88, maxMP: 22, POW:12, DEF: 8, INT: 5, DEX: 9, EVA: 6 },
+      "紗羅 Sara":   { maxHP: 72, maxMP: 39, POW: 6,  DEF: 5, INT:12, DEX: 9, EVA: 6 },
+      "夜渡 Yato":   { maxHP: 86, maxMP: 24, POW:12, DEF: 7, INT: 6, DEX:10, EVA: 6 },
+      "伊蓮娜 Elenna":{maxHP: 80, maxMP: 28, POW: 9,  DEF: 5, INT: 8, DEX:12, EVA: 8 },
+      "洛恩 Rorn":   { maxHP: 82, maxMP: 26, POW: 9,  DEF: 6, INT: 7, DEX:11, EVA: 7 },
+      "梅希亞 Mexia":{ maxHP: 84, maxMP: 24, POW:11, DEF: 6, INT: 7, DEX:11, EVA: 7 },
+      "科爾維斯 Corvus":{maxHP: 78, maxMP: 26, POW: 9, DEF: 5, INT: 8, DEX:12, EVA: 8 },
+      "機匠 R-Alpha":{ maxHP: 76, maxMP: 42, POW: 7,  DEF: 5, INT:12, DEX: 9, EVA: 5 },
+      "瑟莉亞 Celia":{ maxHP: 82, maxMP: 24, POW:10, DEF: 7, INT: 6, DEX:10, EVA: 6 },
+    };
+    function getCompanionBase(name){
+      const m = ROSTER_META[name] || { job:'Kamfe', race:'Human', level:1, starSigil:'Balancewing' };
+      const d = COMPANION_DATA[name] || { maxHP:76, maxMP:24, POW:8, DEF:5, INT:7, DEX:9, EVA:6 };
+      return { name, ...m, ...d, hp: d.maxHP, mp: d.maxMP };
+    }
+
+    // ===== Equipment DB & helpers ===========================================
+    const EQUIP_DB = {
+      Weapon: [
+        { name:'Bronze Sword',     mods:{ POW:+2 } },
+        { name:'Hunter Bow',       mods:{ DEX:+2 } },
+        { name:'Apprentice Staff', mods:{ INT:+2 } },
+        { name:'Duelist Blade',    mods:{ POW:+1, DEX:+1 } },
+        { name:'Heavy Axe',        mods:{ POW:+4, DEX:-1 } },
+      ],
+      Body: [
+        { name:'Cloth Armor',  mods:{ DEF:+1 } },
+        { name:'Leather Vest', mods:{ EVA:+2 } },
+        { name:'Iron Mail',    mods:{ DEF:+3, DEX:-1 } },
+        { name:'Mystic Robe',  mods:{ INT:+2, DEF:+1 } },
+      ],
+      Accessory: [
+        { name:'Traveler Charm', mods:{ DEX:+1, EVA:+1 } },
+        { name:'Power Ring',     mods:{ POW:+2 } },
+        { name:'Mind Pendant',   mods:{ INT:+2 } },
+        { name:'Guardian Band',  mods:{ DEF:+2 } },
+      ],
+    };
+    const getEquipItem = (slot, name) => (EQUIP_DB[slot]||[]).find(it=>it.name===name)||null;
+    const applyMods = (base, mods) => {
+      const out = { ...base };
+      ['POW','DEF','INT','DEX','EVA'].forEach(k => { const v = (mods?.[k]||0); out[k] = clamp((out[k]||0)+v,1,999); });
+      return out;
+    };
+    const getPlayerEffective = (p) => {
+      const gear = p.equip || {};
+      let eff = { ...p };
+      const w = getEquipItem('Weapon', gear.Weapon);
+      const b = getEquipItem('Body', gear.Body);
+      const a = getEquipItem('Accessory', gear.Accessory);
+      if (w) eff = applyMods(eff, w.mods);
+      if (b) eff = applyMods(eff, b.mods);
+      if (a) eff = applyMods(eff, a.mods);
+      return eff;
+    };
+    const modsToText = (mods) => {
+      if(!mods) return '';
+      const parts=[];
+      for (const k of ['POW','DEF','INT','DEX','EVA']) if (mods[k]) parts.push(`${mods[k]>0?'+':''}${mods[k]} ${k}`);
+      return parts.join(', ');
+    };
+
+    // ===== Combat helpers ====================================================
+    const baseAcc = (att, def) => clamp(0.60 + 0.02 * (att.DEX - def.EVA), 0.05, 0.95);
+    const hitChance = (att, def, atkType, stepIndex) => {
+      const stepBonus = stepIndex === 0 ? 0 : stepIndex === 1 ? 0.10 : 0.20;
+      const typeBonus = ATTACKS[atkType].accBonus;
+      return clamp(baseAcc(att, def) + typeBonus + stepBonus, 0.05, 0.98);
+    };
+    const rollDamage = (att, def, atkType) => {
+      const spec = ATTACKS[atkType];
+      const raw = spec.powMul * att.POW + spec.intMul * att.INT;
+      let dmg = Math.round(raw + randInt(-1, 2));
+      dmg = Math.max(1, dmg - Math.round(def.DEF * 0.5));
+      return dmg;
+    };
+
+    // ===== UI bits ===========================================================
+    const HPBar = ({ label, current, max, color }) => {
+      const pct = Math.max(0, Math.round((current/max)*100));
+      return (
+        <div className="w-full">
+          <div className="flex justify-between text-xs text-gray-400 mb-1">
+            <span>{label}</span><span>{current}/{max}</span>
+          </div>
+          <div className="h-3 w-full bg-gray-800/60 rounded-full overflow-hidden">
+            <div className={`h-full ${color} transition-all duration-300`} style={{width: `${pct}%`}}/>
+          </div>
+        </div>
+      );
+    };
+    const StatRow = ({ unit }) => (
+      <div className="mt-3 text-sm text-white/80">
+        POW {unit.POW} · DEF {unit.DEF} · INT {unit.INT} · DEX {unit.DEX} · EVA {unit.EVA}
+      </div>
+    );
+    const Card = ({children, className=""}) => (<div className={`rounded-2xl bg-gray-900/60 border border-white/10 shadow-xl p-5 ${className}`}>{children}</div>);
+    const Divider = () => <div className="h-px bg-white/10 my-4" />;
+    const useAutoscroll = (dep) => { const ref=useRef(null); useEffect(()=>{ if(ref.current) ref.current.scrollTop = ref.current.scrollHeight; },[dep]); return ref; };
+    const FlowButton = ({ value, onChange }) => {
+      const cycle = () => { const i = FLOW_KEYS.indexOf(value); onChange(FLOW_KEYS[(i + 1) % FLOW_KEYS.length]); };
+      const text = value === 'L' ? 'L 輕' : value === 'H' ? 'H 重' : 'S 特';
+      return (<button onClick={cycle} className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition">{text}</button>);
+    };
+    const FullCenter = ({children}) => (<div className="min-h-[70vh] flex items-center justify-center">{children}</div>);
+
+    // ==== Equip UI ===========================================================
+    const EquipSelect = ({ slot, value, onChange }) => {
+      const list = EQUIP_DB[slot] || [];
+      const idx = Math.max(0, list.findIndex(it => it.name === value));
+      const prev = () => onChange(list[(idx - 1 + list.length) % list.length].name);
+      const next = () => onChange(list[(idx + 1) % list.length].name);
+      const cur = list[idx] || null;
+      return (
+        <div className="flex items-center justify-between bg-white/5 rounded-xl p-3">
+          <div>
+            <div className="text-sm font-semibold">{slot}</div>
+            <div className="text-sm">{cur ? cur.name : value}</div>
+            <div className="text-xs text-white/60">{cur ? modsToText(cur.mods) : ""}</div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={prev} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15">‹</button>
+            <button onClick={next} className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15">›</button>
+          </div>
+        </div>
+      );
+    };
+    const EquipPanel = ({ gear, onChange }) => (
+      <div className="grid gap-3 md:grid-cols-3">
+        <EquipSelect slot="Weapon" value={gear.Weapon} onChange={(v)=>onChange('Weapon', v)} />
+        <EquipSelect slot="Body" value={gear.Body} onChange={(v)=>onChange('Body', v)} />
+        <EquipSelect slot="Accessory" value={gear.Accessory} onChange={(v)=>onChange('Accessory', v)} />
+      </div>
+    );
+
+    // ===== Enemy scaling =====================================================
+    const makeEnemyForRoom = (idx, diff, total) => {
+      const diffMul = diff === 'Normal' ? 0.9 : diff === 'Hard' ? 1.1 : 1.3;
+      const roomGrowth = 1 + (idx - 1) * 0.08;
+      const elite = (diff === 'Hard' && idx === total);
+      const boss = (diff === 'VeryHard' && idx === total);
+      const mul = diffMul * roomGrowth * (elite ? 1.25 : 1) * (boss ? 1.6 : 1);
+      const name = boss ? 'Evil Tuma' : elite ? 'Elite Slime' : BASE_ENEMY.name;
+      const hp = Math.round(BASE_ENEMY.maxHP * mul);
+      const mp = Math.round(BASE_ENEMY.maxMP * Math.max(1, mul * 0.6));
+      return {
+        ...BASE_ENEMY, name,
+        maxHP: hp, hp, maxMP: mp, mp,
+        POW: Math.round(BASE_ENEMY.POW * mul),
+        DEF: Math.round(BASE_ENEMY.DEF * mul),
+        INT: Math.round(BASE_ENEMY.INT * mul),
+        DEX: Math.round(BASE_ENEMY.DEX * mul),
+        EVA: Math.round(BASE_ENEMY.EVA * mul),
+      };
+    };
+    const randomFlow = () => { const pick = () => FLOW_KEYS[randInt(0, FLOW_KEYS.length - 1)]; return [pick(), pick(), pick()]; };
+
+    // ===== App ===============================================================
+    function App(){
+      const [screen, setScreen] = useState("title"); // title | main | quest | prepare | battle | result | status | inventory | companions | relay | settings
+      const [player, setPlayer] = useState(() => ({ ...DEFAULT_PLAYER, equip: { Weapon: 'Bronze Sword', Body: 'Cloth Armor', Accessory: 'Traveler Charm' } }));
+      const [inventory] = useState(INVENTORY_START);
+      const [party, setParty] = useState([]);
+      const [compUnits, setCompUnits] = useState({});
+      const [compFlows, setCompFlows] = useState({});
+
+      const [difficulty, setDifficulty] = useState(null);
+      const [totalRooms, setTotalRooms] = useState(0);
+      const [roomIndex, setRoomIndex] = useState(0);
+      const [enemy, setEnemy] = useState(() => makeEnemyForRoom(1, 'Normal', 3));
+
+      const [logs, setLogs] = useState([]); const logRef = useAutoscroll(logs);
+      const [busy, setBusy] = useState(false);
+      const [result, setResult] = useState(null);
+      const [backTo, setBackTo] = useState(null);
+
+      const [playerFlow, setPlayerFlow] = useState(['L','H','S']);
+      const [enemyFlow, setEnemyFlow]   = useState(randomFlow());
+
+      // Navigation
+      const goMain = () => {
+        // 回主畫面：全隊回滿
+        setPlayer(prev => ({ ...prev, hp: prev.maxHP, mp: prev.maxMP }));
+        setCompUnits(prev => {
+          const copy = { ...prev };
+          Object.keys(copy).forEach(n => { copy[n] = { ...copy[n], hp: copy[n].maxHP, mp: copy[n].maxMP }; });
+          return copy;
+        });
+        setScreen('main');
+      };
+      const goQuest = () => setScreen('quest');
+      const goInventory = () => setScreen('inventory');
+      const goSettings = () => setScreen('settings');
+      const goRelay = () => setScreen('relay');
+      const goStatus = (from=null) => { setBackTo(from); setScreen('status'); };
+      const startFromTitle = () => setScreen('main');
+
+      // Quest select
+      const chooseQuest = (diff) => {
+        const cfg = diff === 'Normal' ? 3 : diff === 'Hard' ? 5 : 7;
+        setDifficulty(diff); setTotalRooms(cfg); setRoomIndex(1);
+        setEnemy(makeEnemyForRoom(1, diff, cfg)); setEnemyFlow(randomFlow());
+        const units = {}, flows = {};
+        party.forEach(n => { const b = getCompanionBase(n); units[n] = { ...b }; flows[n] = randomFlow(); });
+        setCompUnits(units); setCompFlows(flows);
+        setLogs([]); setBusy(false);
+        setScreen('prepare');
+      };
+      const enterNextRoom = () => { if (!difficulty) return; setScreen('battle'); };
+
+      // Battle loop
+      useEffect(() => {
+        if (screen !== 'battle' || busy) return;
+        let cancelled = false;
+        (async () => {
+          setBusy(true);
+          let eHP = enemy.hp;
+          let pHP = player.hp;
+          let cHP = Object.fromEntries(party.map(n => [n, (compUnits[n]?.hp ?? getCompanionBase(n).maxHP)]));
+
+          const alliesAlive = () => ['player', ...party].filter(id => id === 'player' ? pHP > 0 : (cHP[id] ?? 0) > 0);
+          const dexOf = (id) => id === 'enemy' ? enemy.DEX : (id === 'player' ? getPlayerEffective(player).DEX : (compUnits[id]?.DEX ?? getCompanionBase(id).DEX));
+          const unitOf = (id) => id === 'enemy' ? enemy : (id === 'player' ? getPlayerEffective(player) : (compUnits[id] || getCompanionBase(id)));
+          const nameOf = (id) => {
+            if (id === 'enemy') return enemy.name;
+            const u = unitOf(id);
+            return id === 'player'
+              ? `Jumo (${jobCode(u)} Lv${u.level}) · ${STAR_SIGILS[u.starSigil]?.abbr} ${STAR_SIGILS[u.starSigil]?.symbol}`
+              : `${u.name} (${jobCode(u)} Lv${u.level}) · ${STAR_SIGILS[u.starSigil]?.abbr} ${STAR_SIGILS[u.starSigil]?.symbol}`;
+          };
+          const flowOf = (id) => id === 'enemy' ? enemyFlow : (id === 'player' ? playerFlow : (compFlows[id] || ['L','H','S']));
+
+          while (!cancelled && eHP > 0 && alliesAlive().length > 0) {
+            const order = [...alliesAlive(), 'enemy'].sort((a,b)=> dexOf(b) - dexOf(a));
+            for (const id of order) {
+              if (cancelled) break;
+              if (id === 'enemy' && eHP <= 0) continue;
+              if (id !== 'enemy') {
+                if (id === 'player' && pHP <= 0) continue;
+                if (id !== 'player' && (cHP[id] ?? 0) <= 0) continue;
+              }
+              const attacker = unitOf(id);
+              const flow = flowOf(id);
+              for (let i = 0; i < 3; i++) {
+                await sleep(140);
+                if (id === 'enemy') {
+                  const candidates = alliesAlive();
+                  if (candidates.length === 0) break;
+                  const targetId = candidates[randInt(0, candidates.length - 1)];
+                  const target = unitOf(targetId);
+                  const acc = hitChance(attacker, target, flow[i], i);
+                  if (Math.random() < acc) {
+                    const dmg = rollDamage(attacker, target, flow[i]);
+                    if (targetId === 'player') {
+                      pHP = Math.max(0, pHP - dmg); setPlayer(prev => ({ ...prev, hp: pHP }));
+                    } else {
+                      const nhp = Math.max(0, (cHP[targetId] ?? 0) - dmg); cHP[targetId] = nhp;
+                      setCompUnits(prev => ({ ...prev, [targetId]: { ...(prev[targetId] || getCompanionBase(targetId)), hp: nhp } }));
+                    }
+                    setLogs(prev => [...prev, `${attacker.name} [${flow[i]}] 命中，對 ${nameOf(targetId)} 造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`].slice(-160));
+                  } else {
+                    setLogs(prev => [...prev, `${attacker.name} [${flow[i]}] 的攻擊落空`].slice(-160));
+                  }
+                } else {
+                  const acc = hitChance(attacker, enemy, flow[i], i);
+                  if (Math.random() < acc) {
+                    const dmg = rollDamage(attacker, enemy, flow[i]);
+                    eHP = Math.max(0, eHP - dmg); setEnemy(prev => ({ ...prev, hp: eHP }));
+                    setLogs(prev => [...prev, `${nameOf(id)} [${flow[i]}] 命中，造成 ${dmg} 傷害（命中率 ${Math.round(acc*100)}%）`].slice(-160));
+                  } else {
+                    setLogs(prev => [...prev, `${nameOf(id)} [${flow[i]}] 未命中（命中率 ${Math.round(acc*100)}%）`].slice(-160));
+                  }
+                }
+                await sleep(100);
+                if (eHP <= 0 || alliesAlive().length === 0) break;
+              }
+              if (eHP <= 0 || alliesAlive().length === 0) break;
+            }
+          }
+
+          if (!cancelled) {
+            if (eHP <= 0) {
+              awardExp(diffExp(difficulty));
+              recoverBetweenRooms();
+              if (roomIndex < totalRooms) {
+                const nextIdx = roomIndex + 1;
+                setRoomIndex(nextIdx);
+                setEnemy(makeEnemyForRoom(nextIdx, difficulty, totalRooms));
+                setEnemyFlow(randomFlow());
+                setScreen('prepare');
+                setLogs(prev => [...prev, `✔ 清空房間 ${roomIndex}，準備進入房間 ${roomIndex+1}`].slice(-160));
+              } else {
+                setResult({ title: 'Victory', desc: `${difficulty} 地城已完全攻略！` });
+                setScreen('result');
+              }
+            } else if (alliesAlive().length === 0) {
+              setResult({ title: 'Defeat', desc: `隊伍全滅，倒在房間 ${roomIndex}（${difficulty}）。` });
+              setScreen('result');
+            }
+          }
+          setBusy(false);
+        })();
+        return () => { cancelled = true; };
+      }, [screen]);
+
+      // Exp / recovery
+      function awardExp(amount) {
+        setPlayer(prev => {
+          let exp = prev.exp + amount, level = prev.level, expToNext = prev.expToNext;
+          let maxHP = prev.maxHP, hp = prev.hp, maxMP = prev.maxMP, mp = prev.mp;
+          while (exp >= expToNext) {
+            exp -= expToNext; level += 1; expToNext = 100 + level * 20;
+            maxHP += 6; hp = Math.min(maxHP, hp + 6);
+            maxMP += 3; mp = Math.min(maxMP, mp + 3);
+          }
+          return { ...prev, exp, level, expToNext, maxHP, hp, maxMP, mp };
+        });
+      }
+      const diffExp = (diff) => diff === 'Normal' ? 10 : diff === 'Hard' ? 18 : 28;
+      function recoverBetweenRooms() {
+        setPlayer(prev => {
+          const hpRec = Math.ceil(prev.maxHP * 0.08);
+          const mpRec = Math.ceil(prev.maxMP * 0.08);
+          return { ...prev, hp: Math.min(prev.maxHP, prev.hp + hpRec), mp: Math.min(prev.maxMP, prev.mp + mpRec) };
+        });
+        setCompUnits(prev => {
+          const copy = { ...prev };
+          Object.keys(copy).forEach(n => {
+            const u = copy[n] || getCompanionBase(n);
+            const hpRec = Math.ceil(u.maxHP * 0.08);
+            const mpRec = Math.ceil(u.maxMP * 0.08);
+            copy[n] = { ...u, hp: Math.min(u.maxHP, (u.hp ?? u.maxHP) + hpRec), mp: Math.min(u.maxMP, (u.mp ?? u.maxMP) + mpRec) };
+          });
+          return copy;
+        });
+      }
+
+      // ===== Screens =========================================================
+      const Title = () => (
+        <FullCenter>
+          <Card className="w-full max-w-xl text-center">
+            <div className="text-3xl font-bold mb-2">Project Hope Prototype</div>
+            <div className="opacity-80 mb-6">gameflow 確認</div>
+            <button onClick={startFromTitle} className="px-6 py-3 rounded-xl bg-emerald-500/90 hover:bg-emerald-500 transition font-medium w-full">Start</button>
+          </Card>
+        </FullCenter>
+      );
+
+      const Main = () => (
+        <div className="space-y-4">
+          <div className="flex justify-end gap-2">
+            <button onClick={()=>goStatus('main')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">角色</button>
+            <button onClick={goInventory} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">背包</button>
+            <button onClick={goSettings} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-sm">設定</button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+            <button disabled className="h-24 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-lg font-semibold disabled:opacity-60 disabled:cursor-not-allowed">星象殿堂</button>
+            <button onClick={goQuest} className="h-24 rounded-2xl bg-indigo-500/90 hover:bg-indigo-500 flex items-center justify-center text-lg font-semibold">布告欄</button>
+            <button onClick={goRelay} className="h-24 rounded-2xl bg-purple-500/90 hover:bg-purple-500 flex items中心 justify-center text-lg font-semibold">連結中繼站</button>
+            <button disabled className="h-24 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-lg font-semibold disabled:opacity-60 disabled:cursor-not-allowed">資源模擬場</button>
+            <button disabled className="h-24 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-lg font-semibold disabled:opacity-60 disabled:cursor-not-allowed">裝備舖</button>
+            <button disabled className="h-24 rounded-2xl bg白/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-lg font-semibold disabled:opacity-60 disabled:cursor-not-allowed">強化舖</button>
+            <button disabled className="h-24 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-lg font-semibold disabled:opacity-60 disabled:cursor-not-allowed">倉庫</button>
+          </div>
+          <Card className="mt-1">
+            <div className="text-sm font-semibold mb-2">目前隊伍（含玩家最多 4 人）：已選 {1 + party.length}/4</div>
+            <div className="flex flex-wrap gap-2">
+              <span className="inline-block font-mono bg-white/10 rounded px-2 py-0.5">Jumo ({jobCode(player)} Lv{player.level}) · {STAR_SIGILS[player.starSigil]?.abbr} {STAR_SIGILS[player.starSigil]?.symbol}</span>
+              {party.length === 0 ? (
+                <span className="text-white/60 text-sm">（尚無隊友）</span>
+              ) : (
+                party.map(n => (
+                  <span key={n} className="inline-block font-mono bg-white/10 rounded px-2 py-0.5">
+                    {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
+                  </span>
+                ))
+              )}
+            </div>
+          </Card>
+        </div>
+      );
+
+      const Quest = () => (
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card><div className="text-lg font-semibold mb-2">Normal</div>
+            <p className="text-sm text白/80">3 個房間 · 怪物弱小</p><Divider/>
+            <button onClick={()=>chooseQuest('Normal')} className="px-4 py-2 rounded-xl bg-emerald-500/90 hover:bg-emerald-500 transition font-medium w-full">開始</button></Card>
+          <Card><div className="text-lg font-semibold mb-2">Hard</div>
+            <p className="text-sm text-white/80">5 個房間 · 怪物中等，最終房為精英</p><Divider/>
+            <button onClick={()=>chooseQuest('Hard')} className="px-4 py-2 rounded-xl bg-amber-500/90 hover:bg-amber-500 transition font-medium w-full">開始</button></Card>
+          <Card><div className="text-lg font-semibold mb-2">VeryHard</div>
+            <p className="text-sm text-white/80">7 個房間 · 最終 Boss：Evil Tuma</p><Divider/>
+            <button onClick={()=>chooseQuest('VeryHard')} className="px-4 py-2 rounded-xl bg-rose-500/90 hover:bg-rose-500 transition font-medium w-full">開始</button></Card>
+        </div>
+      );
+
+      const Prepare = () => (
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card><div className="text-lg font-semibold mb-3">🧑 我方隊伍</div>
+            <div className="space-y-3">
+              <div>
+                <div className="font-semibold">Jumo ({jobCode(player)} Lv{player.level}) · {STAR_SIGILS[player.starSigil]?.abbr} {STAR_SIGILS[player.starSigil]?.symbol}</div>
+                <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
+                <div className="mt-2" />
+                <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
+                <StatRow unit={getPlayerEffective(player)} />
+              </div>
+              {party.map(n => { const u = compUnits[n] || getCompanionBase(n); return (
+                <div key={n} className="pt-2 border-t border-white/10">
+                  <div className="font-semibold">{u.name} ({jobCode(u)} Lv{u.level}) · {STAR_SIGILS[u.starSigil]?.abbr} {STAR_SIGILS[u.starSigil]?.symbol}</div>
+                  <HPBar label="HP" current={u.hp ?? u.maxHP} max={u.maxHP} color="bg-emerald-500" />
+                  <div className="mt-2" />
+                  <HPBar label="MP" current={u.mp ?? u.maxMP} max={u.maxMP} color="bg-sky-500" />
+                  <StatRow unit={u} />
+                </div>
+              ); })}
+            </div>
+          </Card>
+          <Card><div className="text-lg font-semibold mb-1">🛠️ 準備階段</div>
+            <div className="text-sm text-white/70">難度 <span className="font-semibold">{difficulty}</span> · 房間 {roomIndex}/{totalRooms}</div>
+            <div className="text-xs text-white/60">命中加成：第1下 +0%，第2下 +10%，第3下 +20%</div><Divider/>
+            <div className="text-sm mb-2">玩家攻擊流程：</div>
+            <div className="flex gap-2">{playerFlow.map((v,idx)=> (<FlowButton key={idx} value={v} onChange={(nv)=> setPlayerFlow(f => f.map((x,i)=> i===idx?nv:x))} />))}</div>
+            <div className="text-xs text-white/60 mt-2">提示：把 H 放到第三下，享受較高命中加成。</div><Divider/>
+            <div className="flex gap-2">
+              <button onClick={enterNextRoom} className="px-4 py-2 rounded-xl bg-indigo-500/90 hover:bg-indigo-500 transition font-medium">進入下一個房間</button>
+              <button onClick={()=>goStatus('prepare')} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">裝備管理</button>
+            </div>
+            <div className="text-xs text-white/50 mt-2">（按下後將開始自動戰鬥）</div>
+            <Divider/>
+            <div className="text-sm font-semibold mb-2">🧾 戰鬥紀錄（上一房 / 進行中）</div>
+            <div ref={logRef} className="h-40 overflow-auto rounded-xl bg-black/30 p-3 text-sm leading-relaxed">
+              {logs.length === 0 ? <div className="opacity-50">（尚無紀錄）</div> : logs.map((l,i)=>(<div key={i} className="mb-1">• {l}</div>))}
+            </div></Card>
+          <Card><div className="text-lg font-semibold mb-3">👾 下一個敵人：{enemy.name}</div>
+            <HPBar label="HP" current={enemy.maxHP} max={enemy.maxHP} color="bg-rose-500" /><div className="mt-2" />
+            <HPBar label="MP" current={enemy.maxMP} max={enemy.maxMP} color="bg-sky-500" />
+            <StatRow unit={enemy} /><Divider/>
+            <div className="text-sm">敵方流程（隨機）： <span className="ml-2 font-mono bg-white/10 rounded px-2 py-0.5">{enemyFlow.join(' - ')}</span></div></Card>
+        </div>
+      );
+
+      const Battle = () => (
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card><div className="text-lg font-semibold mb-3">🧑 我方隊伍</div>
+            <div className="space-y-3">
+              <div>
+                <div className="font-semibold">Jumo ({jobCode(player)} Lv{player.level}) · {STAR_SIGILS[player.starSigil]?.abbr} {STAR_SIGILS[player.starSigil]?.symbol}</div>
+                <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
+                <div className="mt-2" />
+                <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
+                <StatRow unit={getPlayerEffective(player)} />
+              </div>
+              {party.map(n => { const u = compUnits[n] || getCompanionBase(n); return (
+                <div key={n} className="pt-2 border-t border-white/10">
+                  <div className="font-semibold">{u.name} ({jobCode(u)} Lv{u.level}) · {STAR_SIGILS[u.starSigil]?.abbr} {STAR_SIGILS[u.starSigil]?.symbol}</div>
+                  <HPBar label="HP" current={u.hp ?? u.maxHP} max={u.maxHP} color="bg-emerald-500" />
+                  <div className="mt-2" />
+                  <HPBar label="MP" current={u.mp ?? u.maxMP} max={u.maxMP} color="bg-sky-500" />
+                  <StatRow unit={u} />
+                </div>
+              ); })}
+            </div>
+          </Card>
+          <Card><div className="text-lg font-semibold mb-1">⚔️ 戰鬥中</div>
+            <div className="text-sm text-white/70">{difficulty} · 房間 {roomIndex}/{totalRooms} · 玩家流程: <span className="ml-2 font-mono bg-white/10 rounded px-2 py-0.5">{playerFlow.join(' - ')}</span></div>
+            <div className="text-sm text-white/70">敵人流程: <span className="ml-2 font-mono bg-white/10 rounded px-2 py-0.5">{enemyFlow.join(' - ')}</span></div>
+            <Divider/>
+            <div ref={logRef} className="h-56 overflow-auto rounded-xl bg-black/30 p-3 text-sm leading-relaxed">
+              {logs.length === 0 ? <div className="opacity-50">自動戰鬥中…</div> : logs.map((l,i)=>(<div key={i} className="mb-1">• {l}</div>))}
+            </div><Divider/>
+            <div className="flex justify-between">
+              <button onClick={goMain} className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition">回主畫面</button>
+              <div className="text-xs text-white/60 self-center">每回合連打 3 次（命中逐次上升）</div>
+            </div></Card>
+          <Card><div className="text-lg font-semibold mb-3">👾 {enemy.name}</div>
+            <HPBar label="HP" current={enemy.hp} max={enemy.maxHP} color="bg-rose-500" /><div className="mt-2" />
+            <HPBar label="MP" current={enemy.mp} max={enemy.maxMP} color="bg-sky-500" />
+            <StatRow unit={enemy} /></Card>
+        </div>
+      );
+
+      const Status = () => {
+        const pct = Math.round((player.exp / player.expToNext) * 100);
+        const gear = player.equip || { Weapon:'Bronze Sword', Body:'Cloth Armor', Accessory:'Traveler Charm' };
+        const pEff = getPlayerEffective(player);
+        return (
+          <Card className="max-w-3xl">
+            <div className="text-lg font-semibold mb-2">🧑 角色狀態</div>
+            <div className="text-sm">名稱：Jumo ({jobCode(player)} Lv{player.level}) · {STAR_SIGILS[player.starSigil]?.abbr} {STAR_SIGILS[player.starSigil]?.symbol}</div>
+            <div className="mt-3" />
+            <HPBar label="HP" current={player.hp} max={player.maxHP} color="bg-emerald-500" />
+            <div className="mt-2" />
+            <HPBar label="MP" current={player.mp} max={player.maxMP} color="bg-sky-500" />
+            <StatRow unit={pEff} />
+            <Divider/>
+            <div className="text-lg font-semibold mb-2">🧰 裝備</div>
+            <EquipPanel gear={gear} onChange={(slot,newName)=> setPlayer(prev => ({ ...prev, equip: { ...prev.equip, [slot]: newName } }))} />
+            <div className="text-sm text-white/70 mt-3">裝備加成：
+              <span className="ml-2 font-mono bg-white/10 rounded px-2 py-0.5">
+                {['Weapon','Body','Accessory'].map(s=>modsToText(getEquipItem(s, gear[s])?.mods)).filter(Boolean).join(' ｜ ')}
+              </span>
+            </div>
+            <Divider/>
+            <div className="text-sm">升級進度：{player.exp}/{player.expToNext} EXP（剩餘 {Math.max(0, player.expToNext - player.exp)}）</div>
+            <div className="h-2 bg-white/10 rounded mt-2 overflow-hidden"><div className="h-full bg-amber-400" style={{width: `${pct}%`}}/></div>
+            <Divider/>
+            <button onClick={()=> setScreen(backTo || 'main')} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回</button>
+          </Card>
+        );
+      };
+
+      const Inventory = () => (
+        <Card className="max-w-4xl">
+          <div className="text-lg font-semibold mb-2">🎒 背包</div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <div className="font-semibold mb-2">道具</div>
+              {inventory.items.length === 0 ? <div className="text-white/60 text-sm">（空）</div> :
+                <ul className="space-y-2">{inventory.items.map(it => (
+                  <li key={it.id} className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>{it.name} <span className="text-white/50">— {it.desc}</span></span><span className="font-mono">×{it.qty}</span></li>
+                ))}</ul>}
+            </div>
+            <div>
+              <div className="font-semibold mb-2">裝備（展示用，請到「角色」調整）</div>
+              <ul className="space-y-2">
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Weapon</span><span className="text-white/60">{player.equip?.Weapon}</span></li>
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Body</span><span className="text-white/60">{player.equip?.Body}</span></li>
+                <li className="flex justify-between bg-white/5 rounded-lg px-3 py-2 text-sm"><span>Accessory</span><span className="text-white/60">{player.equip?.Accessory}</span></li>
+              </ul>
+            </div>
+          </div>
+          <Divider/>
+          <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
+        </Card>
+      );
+
+      const Companions = () => {
+        const toggle = (name) => { setParty(p => p.includes(name) ? p.filter(n=>n!==name) : [...p, name]); };
+        return (
+          <Card className="max-w-3xl">
+            <div className="text-lg font-semibold mb-2">👥 同伴列表</div>
+            <div className="text-sm text-white/70 mb-2">點擊加入/移除（示意）。</div>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {COMPANIONS_POOL.map(n => (
+                <button key={n} onClick={()=>toggle(n)} className={`px-3 py-1.5 rounded-full border ${party.includes(n)?'border-emerald-400 bg-emerald-400/10':'border-white/15 bg-white/5 hover:bg-white/10'} transition`}>
+                  {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
+                </button>
+              ))}
+            </div>
+            <div className="text-sm">目前隊伍：{party.length === 0 ? <span className="text-white/60">（無）</span> : party.map(n => (<span key={n} className="inline-block font-mono bg-white/10 rounded px-2 py-0.5 mr-1">{`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}</span>))}</div>
+            <Divider/>
+            <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
+          </Card>
+        );
+      };
+
+      const Relay = () => {
+        const maxReached = party.length >= MAX_COMPANIONS;
+        const toggle = (name) => {
+          setParty(prev => prev.includes(name)
+            ? prev.filter(n => n !== name)
+            : (prev.length >= MAX_COMPANIONS ? prev : [...prev, name])
+          );
+        };
+        return (
+          <Card className="max-w-3xl">
+            <div className="text-lg font-semibold mb-2">🔗 連結中繼站</div>
+            <div className="text-sm text-white/70 mb-2">選擇隊友加入隊伍（含玩家最多 4 人）：目前 <span className="font-semibold">{1 + party.length}/4</span></div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {COMPANIONS_POOL.map(n => {
+                const selected = party.includes(n);
+                const disabled = !selected && maxReached;
+                return (
+                  <button key={n} onClick={() => !disabled && toggle(n)}
+                    className={`px-3 py-1.5 rounded-full border ${selected
+                      ? 'border-emerald-400 bg-emerald-400/10'
+                      : disabled
+                        ? 'border-white/10 bg-white/5 opacity-50 cursor-not-allowed'
+                        : 'border-white/15 bg-white/5 hover:bg-white/10'}`}>
+                      {`${n} (${jobCode(ROSTER_META[n])} Lv${ROSTER_META[n].level}) · ${STAR_SIGILS[ROSTER_META[n].starSigil]?.abbr} ${STAR_SIGILS[ROSTER_META[n].starSigil]?.symbol}`}
+                  </button>
+                );
+              })}
+            </div>
+            {maxReached && <div className="text-xs text-white/60 mb-2">已達上限（包含玩家 Jumo 最多 4 人）。請先移除一位再加入。</div>}
+            <Divider/>
+            <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
+          </Card>
+        );
+      };
+
+      const Settings = () => (
+        <Card className="max-w-3xl">
+          <div className="text-lg font-semibold mb-2">⚙️ 設定</div>
+          <div className="text-white/70 text-sm">尚未開放，僅佔位。</div>
+          <Divider/>
+          <button onClick={goMain} className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition font-medium">返回主畫面</button>
+        </Card>
+      );
+
+      const Result = () => (
+        <FullCenter>
+          <Card className="w-full max-w-xl text-center">
+            <div className="text-3xl font-bold mb-2">{result?.title}</div>
+            <div className="opacity-80 mb-6">{result?.desc}</div>
+            <div className="flex gap-2">
+              <button onClick={goMain} className="px-6 py-3 rounded-xl bg-emerald-500/90 hover:bg-emerald-500 transition font-medium w-full">回主畫面</button>
+            </div>
+          </Card>
+        </FullCenter>
+      );
+
+      return (
+        <div className="p-6 max-w-6xl mx-auto text-white">
+          <div className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-bold tracking-tight">Project Hope Prototype</h1>
+            <div className="text-sm text-white/50">gameflow 確認 · 布告欄→任務難度 · 右上：角色/背包/設定</div>
+          </div>
+
+          {screen === 'title' && <Title/>}
+          {screen === 'main' && <Main/>}
+          {screen === 'quest' && <Quest/>}
+          {screen === 'prepare' && <Prepare/>}
+          {screen === 'battle' && <Battle/>}
+          {screen === 'status' && <Status/>}
+          {screen === 'inventory' && <Inventory/>}
+          {screen === 'companions' && <Companions/>}
+          {screen === 'relay' && <Relay/>}
+          {screen === 'settings' && <Settings/>}
+          {screen === 'result' && <Result/>}
+
+          <div className="mt-6 text-xs text-white/50">
+            放置型戰鬥：L/H/S 三段攻擊；命中逐次 +0/+10/+20。房間間回復 8% HP/MP；回主畫面時回滿；戰鬥紀錄在房間間保留。新增：裝備系統（武器/身體/副裝），在主畫面「角色」或準備階段可調整。
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
